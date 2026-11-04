@@ -1,0 +1,202 @@
+# semver.moth's tests: moth test semver.test.moth
+
+use "semver.moth" as semver
+
+to fails_with with words
+    try
+        semver's parse(words)
+    if it fails with why
+        return why
+    end
+    return "no mistake"
+end
+
+to test_reading
+    set v to semver's parse("1.4.0-beta.2+build.7")
+    expect v's major is 1
+    expect v's minor is 4
+    expect v's patch is 0
+    expect v's pre is list of "beta", "2"
+    expect v's build is list of "build", "7"
+    expect kind of v is "version"
+    expect "{v}" is "1.4.0-beta.2+build.7"
+    expect semver's written(v) is "1.4.0-beta.2+build.7"
+    expect semver's written("v2.0.0") is "2.0.0"
+    expect semver's written(" =3.1.4 ") is "3.1.4"
+    expect pre of semver's parse("1.0.0-x-y-z.--") is list of "x-y-z", "--"
+    expect build of semver's parse("1.0.0+0.build.1-rc.10000aaa-kk-0.1") is list of "0", "build", "1-rc", "10000aaa-kk-0", "1"
+    expect major of semver's parse("0.0.0") is 0
+    expect semver's version(1, 2, 3) is semver's parse("1.2.3")
+end
+
+to test_versions_that_arent
+    expect semver's is_valid("1.2.3")
+    expect semver's is_valid("1.2.3-0.3.7")
+    expect semver's is_valid("1.0.0-alpha+001")
+    for each bad in list of "", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "1.2.03", "1.2.3-", "1.2.3+", "1.2.3-01",
+        "1.2.3-a..b", "1.2.3-a_b", "a.b.c", "1.2.3 4", "-1.2.3"
+        expect not semver's is_valid(bad)
+    end
+    expect semver's is_valid("1.2.3-0a") # a part with a letter can start with 0
+    expect semver's is_valid("1.2.3+001") # so can any part of a build
+    expect fails_with("1.2") is "'1.2' isn't a version: it needs three numbers, as in 1.4.0"
+    expect fails_with("1.x.3") is "'1.x.3' isn't a version: 'x' isn't a whole number"
+    expect fails_with("1.2.3-a!") is "'1.2.3-a!' isn't a version: its pre-release has '!' in it"
+end
+
+to test_comparing
+    expect semver's compare("1.10.0", "1.9.3") is 1
+    expect semver's compare("1.9.3", "1.10.0") is -1
+    expect semver's compare("2.0.0", "2.0.0") is 0
+    expect semver's compare("2.0.0+a", "2.0.0+b") is 0 # a build is left out
+    expect semver's is_newer("2.0.0", "2.0.0-rc.1")
+    expect semver's is_older("1.0.0-alpha", "1.0.0")
+    expect semver's is_same("v1.2.3", "1.2.3")
+    # the standard's own order
+    set order to list of "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2",
+        "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"
+    for each k from 1 to length of order - 1
+        expect semver's is_older(item k of order, item (k + 1) of order)
+        expect semver's is_newer(item (k + 1) of order, item k of order)
+    end
+    expect semver's compare("1.0.0-B", "1.0.0-a") is -1 # by the letters' codes
+    expect semver's compare("1.0.0-2", "1.0.0-10") is -1 # numbers by their size
+    expect semver's compare("1.0.0-a", "1.0.0-a.0") is -1
+end
+
+to test_sorting
+    expect semver's sorted(list of "1.10.0", "1.2.0", "1.9.3", "1.2.0-beta") is list of "1.2.0-beta", "1.2.0",
+        "1.9.3", "1.10.0"
+    expect semver's sorted(empty list) is empty list
+    expect semver's newest(list of "0.9.0", "1.0.0-rc.1", "0.10.2") is "1.0.0-rc.1"
+    expect semver's newest(empty list) is nothing
+    set kept to semver's sorted(list of semver's parse("2.0.0"), semver's parse("1.0.0"))
+    expect "{item 1 of kept}" is "1.0.0"
+end
+
+to test_bumping
+    expect semver's bump("1.4.2", "major") is "2.0.0"
+    expect semver's bump("1.4.2", "minor") is "1.5.0"
+    expect semver's bump("1.4.2", "patch") is "1.4.3"
+    expect semver's bump("1.4.2+build.9", "patch") is "1.4.3"
+    expect semver's bump("2.0.0-rc.1", "major") is "2.0.0"
+    expect semver's bump("2.1.0-rc.1", "major") is "3.0.0"
+    expect semver's bump("1.3.0-beta", "minor") is "1.3.0"
+    expect semver's bump("1.3.1-beta", "minor") is "1.4.0"
+    expect semver's bump("1.2.4-beta", "patch") is "1.2.4"
+    expect semver's bump("1.3.0-beta.1", "pre") is "1.3.0-beta.2"
+    expect semver's bump("1.3.0-beta.9.x", "pre") is "1.3.0-beta.10.x"
+    expect semver's bump("1.3.0-beta", "pre") is "1.3.0-beta.0"
+    expect semver's bump("1.2.3", "pre") is "1.2.4-0"
+    try
+        semver's bump("1.2.3", "huge")
+        expect no
+    if it fails with why
+        expect why is "bump takes \"major\", \"minor\", \"patch\" or \"pre\", not 'huge'"
+    end
+end
+
+to test_simple_ranges
+    expect semver's satisfies("1.2.3", "1.2.3")
+    expect semver's satisfies("1.2.3", "=1.2.3")
+    expect not semver's satisfies("1.2.4", "1.2.3")
+    expect semver's satisfies("1.2.3", ">=1.2.3")
+    expect semver's satisfies("1.2.3", ">= 1.2.3") # a space after the op
+    expect not semver's satisfies("1.2.2", ">=1.2.3")
+    expect semver's satisfies("1.2.4", ">1.2.3")
+    expect not semver's satisfies("1.2.3", ">1.2.3")
+    expect semver's satisfies("1.2.2", "<1.2.3")
+    expect semver's satisfies("1.2.3", "<=1.2.3")
+    expect semver's satisfies("1.5.0", ">=1.0.0 <2.0.0")
+    expect not semver's satisfies("2.0.0", ">=1.0.0 <2.0.0")
+    expect semver's satisfies("1.0.0", "1.0.0 || 2.0.0")
+    expect semver's satisfies("2.0.0", "<1.0.0 || >=2.0.0")
+    expect not semver's satisfies("1.5.0", "<1.0.0 || >=2.0.0")
+    expect semver's satisfies("0.0.1", "*")
+    expect semver's satisfies("9.9.9", "")
+    expect semver's satisfies(semver's parse("1.2.3"), "1.x")
+end
+
+to test_partial_ranges
+    expect semver's satisfies("1.2.9", "1.2.x")
+    expect semver's satisfies("1.2.0", "1.2")
+    expect not semver's satisfies("1.3.0", "1.2")
+    expect semver's satisfies("1.9.0", "1")
+    expect not semver's satisfies("2.0.0", "1.X")
+    expect semver's satisfies("1.3.0", ">1.2")
+    expect not semver's satisfies("1.2.9", ">1.2")
+    expect semver's satisfies("2.0.0", ">1")
+    expect not semver's satisfies("1.9.9", ">1")
+    expect semver's satisfies("1.1.9", "<1.2")
+    expect not semver's satisfies("1.2.0", "<1.2")
+    expect semver's satisfies("1.2.9", "<=1.2")
+    expect not semver's satisfies("1.3.0", "<=1.2")
+    expect semver's satisfies("1.2.0", ">=1.2")
+end
+
+to test_caret_and_tilde
+    expect semver's satisfies("1.8.0", "^1.2.0")
+    expect semver's satisfies("1.2.0", "^1.2.0")
+    expect not semver's satisfies("2.0.0", "^1.2.0")
+    expect not semver's satisfies("1.1.9", "^1.2.0")
+    expect semver's satisfies("0.2.9", "^0.2.3")
+    expect not semver's satisfies("0.3.0", "^0.2.3")
+    expect semver's satisfies("0.0.3", "^0.0.3")
+    expect not semver's satisfies("0.0.4", "^0.0.3")
+    expect semver's satisfies("1.9.0", "^1.2")
+    expect semver's satisfies("0.0.9", "^0.0")
+    expect not semver's satisfies("0.1.0", "^0.0")
+    expect semver's satisfies("0.9.0", "^0.x")
+    expect semver's satisfies("0.9.0", "^0")
+    expect semver's satisfies("1.2.9", "~1.2.3")
+    expect not semver's satisfies("1.3.0", "~1.2.3")
+    expect semver's satisfies("1.2.0", "~1.2")
+    expect semver's satisfies("1.9.0", "~1")
+    expect not semver's satisfies("2.0.0", "~1")
+    expect semver's satisfies("1.2.5", "~>1.2.3")
+end
+
+to test_hyphen_ranges
+    expect semver's satisfies("1.2.3", "1.2.3 - 2.3.4")
+    expect semver's satisfies("2.3.4", "1.2.3 - 2.3.4")
+    expect not semver's satisfies("2.3.5", "1.2.3 - 2.3.4")
+    expect semver's satisfies("1.2.0", "1.2 - 2.3.4")
+    expect semver's satisfies("2.3.9", "1.2.3 - 2.3")
+    expect not semver's satisfies("2.4.0", "1.2.3 - 2.3")
+    expect semver's satisfies("2.9.9", "1.2.3 - 2")
+    expect not semver's satisfies("3.0.0", "1.2.3 - 2")
+end
+
+to test_pre_releases_in_ranges
+    expect not semver's satisfies("1.3.0-beta", "^1.2.0") # no beta by mistake
+    expect not semver's satisfies("2.0.0-alpha", "^1.2.0")
+    expect not semver's satisfies("2.0.0-alpha", "<2.0.0")
+    expect semver's satisfies("1.3.0-beta", ">=1.3.0-alpha")
+    expect semver's satisfies("1.3.0-beta.2", "^1.3.0-beta.1")
+    expect not semver's satisfies("1.3.1-beta.2", "^1.3.0-beta.1") # a pre-release of another patch
+    expect semver's satisfies("1.3.1", "^1.3.0-beta.1")
+    expect semver's satisfies("1.2.3-rc.1", "1.2.3-rc.1")
+    expect semver's satisfies("1.2.3-rc.2", "~1.2.3-rc.1")
+end
+
+to test_picking_from_a_range
+    set released to list of "1.2.0", "1.2.7", "1.9.0", "2.1.0", "2.2.0-beta"
+    expect semver's newest_satisfying(released, "~1.2") is "1.2.7"
+    expect semver's newest_satisfying(released, "^1.0.0") is "1.9.0"
+    expect semver's newest_satisfying(released, ">=2.0.0") is "2.1.0"
+    expect semver's newest_satisfying(released, "^3") is nothing
+    expect semver's oldest_satisfying(released, "^1.2.1") is "1.2.7"
+end
+
+to test_ranges_that_arent
+    expect semver's is_valid_range(">=1.0.0 <2.0.0 || ^3.1")
+    expect not semver's is_valid_range(">=a.b")
+    expect not semver's is_valid_range("1.2.3.4")
+    expect not semver's is_valid_range("^1.2-beta")
+    try
+        semver's satisfies("1.0.0", "~banana")
+        expect no
+    if it fails with why
+        expect why is "'~banana' isn't a range: 'banana' isn't a version"
+    end
+end

@@ -1,0 +1,653 @@
+# Versions as Semantic Versioning 2.0.0 writes them (1.4.0, 2.0.0-beta.2, 1.0.0+build.7): read, compared,
+# sorted and moved on, and ranges such as ^1.2.0, ~1.4, >=1.0.0 <2.0.0 and 1.x checked the way npm checks them.
+# In Moth alone, so it works everywhere.
+#
+#   use the package "semver" as semver
+#   set v to semver's parse("1.4.0-beta.2+build.7")
+#   say v " " v's major " " v's minor " " v's patch " " v's pre      # 1.4.0-beta.2+build.7 1 4 0 ["beta", "2"]
+#   say semver's compare("1.10.0", "1.9.3")                          # 1: the first is newer (-1 older, 0 the same)
+#   say semver's is_newer("2.0.0", "2.0.0-rc.1")                     # yes
+#   say semver's sorted(list of "1.10.0", "1.2.0", "1.9.3")           # ["1.2.0", "1.9.3", "1.10.0"]
+#   say semver's bump("1.4.2", "minor")                              # 1.5.0
+#   say semver's satisfies("1.8.0", "^1.2.0")                        # yes
+#   say semver's newest_satisfying((list of "1.2.0", "1.9.0", "2.1.0"), "~1.2")   # 1.2.0
+#
+# parse takes a "v" or "=" in front, as git tags have, and fails with a message that says what's wrong:
+# catch it with `try`, or ask is_valid first. A version is a record of the kind "version": its major, minor
+# and patch numbers, pre (the pre-release's parts, as text) and build (the build's parts), shown as it's
+# written. Anything that takes a version takes the record or its text.
+#
+# Ranges: 1.2.3 or =1.2.3 is that one; <, <=, > and >= compare; ^1.2.3 is up to the next major (^0.2.3 up to
+# 0.3.0, ^0.0.3 only 0.0.3); ~1.2.3 is up to the next minor; 1.2.x, 1.2, 1.x, 1, * and "" leave out what's
+# missing; 1.2.3 - 2.0.0 is everything between, both ends in; comparisons with spaces between must all hold,
+# and || is either side. A pre-release (1.3.0-beta) only satisfies a range that names a pre-release of the same
+# major, minor and patch (>=1.3.0-alpha), as npm has it, so ^1.2.0 doesn't pick up a beta by mistake.
+
+# a version: its numbers, and the parts of its pre-release and build, each text
+kind version with major, minor, patch, pre or empty list, build or empty list
+    to shown with self
+        set made to "{self's major}.{self's minor}.{self's patch}"
+        if length of self's pre is greater than 0
+            set made to made + "-" + (join self's pre with ".")
+        end
+        if length of self's build is greater than 0
+            set made to made + "+" + (join self's build with ".")
+        end
+        return made
+    end
+end
+
+# ---------- reading ----------
+
+# the version in `words`, or a mistake that says what's wrong with it
+to parse with words
+    set given to semver_trimmed("" + words)
+    set body to given
+    if length of body is greater than 0 and (item 1 of body is "v" or item 1 of body is "V" or item 1 of body is "=")
+        set body to semver_from(body, 2)
+    end
+    set build to empty list
+    set at to position of "+" in body
+    if at is greater than 0
+        set build to semver_identifiers(given, semver_from(body, at + 1), "build", no)
+        set body to semver_upto(body, at - 1)
+    end
+    set pre to empty list
+    set at to position of "-" in body
+    if at is greater than 0
+        set pre to semver_identifiers(given, semver_from(body, at + 1), "pre-release", yes)
+        set body to semver_upto(body, at - 1)
+    end
+    set numbers to split body by "."
+    if length of numbers is not 3
+        fail with "'" + given + "' isn't a version: it needs three numbers, as in 1.4.0"
+    end
+    set made to empty list
+    for each part in numbers
+        if not semver_is_digits(part)
+            fail with "'" + given + "' isn't a version: '" + part + "' isn't a whole number"
+        end
+        if length of part is greater than 1 and item 1 of part is "0"
+            fail with "'" + given + "' isn't a version: '" + part + "' starts with a 0"
+        end
+        add number of part to made
+    end
+    return version(item 1 of made, item 2 of made, item 3 of made, pre, build)
+end
+
+# whether `words` is a version parse can read
+to is_valid with words
+    try
+        parse(words)
+    if it fails
+        return no
+    end
+    return yes
+end
+
+# a version written out: 1.4.0-beta.2+build.7
+to written with v
+    return "{semver_version(v)}"
+end
+
+# a version's pre-release or build parts, from the text after its - or +
+to semver_identifiers with given, words, what, numbers_plain
+    set parts to split words by "."
+    for each part in parts
+        if part is ""
+            fail with "'" + given + "' isn't a version: its " + what + " has an empty part"
+        end
+        for each c in part
+            if not (semver_is_digits(c) or semver_is_letter(c) or c is "-")
+                fail with "'" + given + "' isn't a version: its " + what + " has '" + c + "' in it"
+            end
+        end
+        if numbers_plain and semver_is_digits(part) and length of part is greater than 1 and item 1 of part is "0"
+            fail with "'" + given + "' isn't a version: its " + what + " part '" + part + "' starts with a 0"
+        end
+    end
+    return parts
+end
+
+# a version record from a record or text
+to semver_version with v
+    try
+        if v's major is at least 0
+            return v
+        end
+    if it fails
+        return parse(v)
+    end
+    return parse(v)
+end
+
+# ---------- comparing ----------
+
+# -1 if a is older than b, 0 if they're the same version, 1 if a is newer; a build is left out, as the
+# standard says
+to compare with a, b
+    set x to semver_version(a)
+    set y to semver_version(b)
+    set c to semver_numbers(x's major, y's major)
+    if c is 0
+        set c to semver_numbers(x's minor, y's minor)
+    end
+    if c is 0
+        set c to semver_numbers(x's patch, y's patch)
+    end
+    if c is 0
+        set c to semver_pre(x's pre, y's pre)
+    end
+    return c
+end
+
+to is_newer with a, b
+    return compare(a, b) is 1
+end
+
+to is_older with a, b
+    return compare(a, b) is -1
+end
+
+to is_same with a, b
+    return compare(a, b) is 0
+end
+
+to semver_numbers with a, b
+    if a is less than b
+        return -1
+    else if a is greater than b
+        return 1
+    end
+    return 0
+end
+
+# pre-releases: none is newer than any; then part by part, numbers by their size and below any other text,
+# text by its letters; and more parts is newer when all before them are the same
+to semver_pre with a, b
+    if length of a is 0 and length of b is 0
+        return 0
+    else if length of a is 0
+        return 1
+    else if length of b is 0
+        return -1
+    end
+    set k to 1
+    repeat while k is at most length of a and k is at most length of b
+        set p to item k of a
+        set q to item k of b
+        set c to 0
+        if semver_is_digits(p) and semver_is_digits(q)
+            set c to semver_numbers(number of p, number of q)
+        else if semver_is_digits(p)
+            set c to -1
+        else if semver_is_digits(q)
+            set c to 1
+        else
+            set c to semver_texts(p, q)
+        end
+        if c is not 0
+            return c
+        end
+        add 1 to k
+    end
+    return semver_numbers(length of a, length of b)
+end
+
+# text by its letters' codes, as the standard asks (so "Z" is before "a")
+to semver_texts with a, b
+    set x to a as bytes
+    set y to b as bytes
+    set k to 1
+    repeat while k is at most length of x and k is at most length of y
+        if byte k of x is not byte k of y
+            return semver_numbers(byte k of x, byte k of y)
+        end
+        add 1 to k
+    end
+    return semver_numbers(length of x, length of y)
+end
+
+# the versions, oldest first, each as it was given
+to sorted with versions
+    set made to empty list
+    for each v in versions
+        set k to length of made
+        repeat while k is at least 1 and compare(item k of made, v) is 1
+            set k to k - 1
+        end
+        set made to semver_inserted(made, k + 1, v)
+    end
+    return made
+end
+
+to semver_inserted with xs, at, x
+    set made to empty list
+    set k to 1
+    for each one in xs
+        if k is at
+            add x to made
+        end
+        add one to made
+        add 1 to k
+    end
+    if at is greater than length of xs
+        add x to made
+    end
+    return made
+end
+
+# the newest of the versions, as it was given, or nothing if there are none
+to newest with versions
+    set best to nothing
+    for each v in versions
+        if best is nothing or compare(v, best) is 1
+            set best to v
+        end
+    end
+    return best
+end
+
+# ---------- moving on ----------
+
+# the next version: "major", "minor" or "patch" (as npm has it, a pre-release becomes its own release:
+# 2.0.0-rc.1 to 2.0.0 for a major, 1.3.0-beta to 1.3.0 for a minor, 1.2.4-beta to 1.2.4 for a patch), or
+# "pre": 1.3.0-beta.1 to 1.3.0-beta.2, 1.3.0-beta to 1.3.0-beta.0, and 1.2.3 to 1.2.4-0
+to bump with v, part
+    set x to semver_version(v)
+    set has_pre to length of x's pre is greater than 0
+    if part is "major"
+        if has_pre and x's minor is 0 and x's patch is 0
+            return written(version(x's major, 0, 0))
+        end
+        return written(version(x's major + 1, 0, 0))
+    else if part is "minor"
+        if has_pre and x's patch is 0
+            return written(version(x's major, x's minor, 0))
+        end
+        return written(version(x's major, x's minor + 1, 0))
+    else if part is "patch"
+        if has_pre
+            return written(version(x's major, x's minor, x's patch))
+        end
+        return written(version(x's major, x's minor, x's patch + 1))
+    else if part is "pre"
+        if not has_pre
+            return written(version(x's major, x's minor, x's patch + 1, list of "0"))
+        end
+        set pre to empty list
+        for each one in x's pre
+            add one to pre
+        end
+        set k to length of pre
+        repeat while k is at least 1 and not semver_is_digits(item k of pre)
+            set k to k - 1
+        end
+        if k is 0
+            add "0" to pre
+        else
+            set item k of pre to "" + (number of item k of pre + 1)
+        end
+        return written(version(x's major, x's minor, x's patch, pre))
+    end
+    fail with "bump takes \"major\", \"minor\", \"patch\" or \"pre\", not '" + part + "'"
+end
+
+# ---------- ranges ----------
+
+# whether the version is in the range
+to satisfies with v, range
+    set x to semver_version(v)
+    for each comparators in semver_range(range)
+        if semver_all_hold(x, comparators)
+            return yes
+        end
+    end
+    return no
+end
+
+# the newest of the versions in the range, as it was given, or nothing if none is
+to newest_satisfying with versions, range
+    set in_range to empty list
+    for each v in versions
+        if satisfies(v, range)
+            add v to in_range
+        end
+    end
+    return newest(in_range)
+end
+
+# the oldest of the versions in the range, as it was given, or nothing if none is
+to oldest_satisfying with versions, range
+    set best to nothing
+    for each v in versions
+        if satisfies(v, range) and (best is nothing or compare(v, best) is -1)
+            set best to v
+        end
+    end
+    return best
+end
+
+# whether `words` is a range satisfies can read
+to is_valid_range with words
+    try
+        semver_range(words)
+    if it fails
+        return no
+    end
+    return yes
+end
+
+to semver_all_hold with x, comparators
+    for each one in comparators
+        set c to compare(x, one's against)
+        set holds to no
+        match one's op
+            when "="
+                set holds to c is 0
+            when "<"
+                set holds to c is -1
+            when "<="
+                set holds to c is not 1
+            when ">"
+                set holds to c is 1
+            when ">="
+                set holds to c is not -1
+        end
+        if not holds
+            return no
+        end
+    end
+    if length of x's pre is 0
+        return yes
+    end
+    # a pre-release needs a comparator with a pre-release of its own numbers
+    for each one in comparators
+        set y to one's against
+        if length of y's pre is greater than 0 and y's major is x's major and y's minor is x's minor
+            and y's patch is x's patch
+            return yes
+        end
+    end
+    return no
+end
+
+# a range as a list of choices (the sides of its ||), each a list of comparators: records of an op and the
+# version it's against
+to semver_range with range
+    set choices to empty list
+    for each side in semver_split_on(semver_trimmed("" + range), "||")
+        add semver_choice(range, semver_trimmed(side)) to choices
+    end
+    return choices
+end
+
+to semver_choice with range, side
+    set made to empty list
+    set words to semver_words(side)
+    if length of words is 0
+        return made
+    end
+    if length of words is 3 and item 2 of words is "-"
+        set low to semver_partial(range, item 1 of words)
+        set high to semver_partial(range, item 3 of words)
+        semver_add_all(made, semver_at_least(low))
+        semver_add_all(made, semver_at_most(high))
+        return made
+    end
+    set k to 1
+    repeat while k is at most length of words
+        set word to item k of words
+        # an op on its own, with the version after a space: >= 1.2.0
+        if (word is "<" or word is "<=" or word is ">" or word is ">=" or word is "=" or word is "^" or word is "~")
+            and k is less than length of words
+            set word to word + item (k + 1) of words
+            add 1 to k
+        end
+        semver_add_all(made, semver_comparator(range, word))
+        add 1 to k
+    end
+    return made
+end
+
+to semver_add_all with made, more
+    for each one in more
+        add one to made
+    end
+end
+
+# the comparators one word of a range means
+to semver_comparator with range, word
+    set op to ""
+    for each two in list of "<=", ">=", "~>"
+        if op is "" and length of word is at least 2 and semver_upto(word, 2) is two
+            set op to two
+        end
+    end
+    if op is "" and length of word is at least 1 and (item 1 of word is in "<>=^~")
+        set op to item 1 of word
+    end
+    set p to semver_partial(range, semver_from(word, length of op + 1))
+    if op is "~" or op is "~>"
+        return semver_tilde(p)
+    else if op is "^"
+        return semver_caret(p)
+    else if op is "" or op is "="
+        if p's given is 3
+            return list of semver_op("=", semver_whole(p))
+        end
+        return semver_between(p)
+    else if op is ">="
+        return semver_at_least(p)
+    else if op is "<="
+        return semver_at_most(p)
+    else if op is ">"
+        if p's given is 0
+            return list of semver_op("<", version(0, 0, 0, list of "0"))
+        else if p's given is 3
+            return list of semver_op(">", semver_whole(p))
+        else if p's given is 1
+            return list of semver_op(">=", version(p's major + 1, 0, 0))
+        end
+        return list of semver_op(">=", version(p's major, p's minor + 1, 0))
+    end
+    # <
+    if p's given is 0
+        return list of semver_op("<", version(0, 0, 0, list of "0"))
+    else if p's given is 3
+        return list of semver_op("<", semver_whole(p))
+    end
+    # <1.2 is below 1.2.0 and its pre-releases
+    return list of semver_op("<", version(p's major, p's minor, p's patch, list of "0"))
+end
+
+to semver_op with op, against
+    return record with op op, against against
+end
+
+# a version as a range writes it: 1, 1.2, 1.2.x or 1.2.3-beta, with how many of its numbers are given
+to semver_partial with range, word
+    set body to word
+    if length of body is greater than 0 and (item 1 of body is "v" or item 1 of body is "V")
+        set body to semver_from(body, 2)
+    end
+    if body is "" or body is "*" or body is "x" or body is "X"
+        return record with given 0, major 0, minor 0, patch 0, pre empty list, build empty list
+    end
+    set tail to ""
+    set at to semver_first_of(body, "-+")
+    if at is greater than 0
+        set tail to semver_from(body, at)
+        set body to semver_upto(body, at - 1)
+    end
+    set parts to split body by "."
+    if length of parts is greater than 3
+        fail with "'" + range + "' isn't a range: '" + word + "' has more than three numbers"
+    end
+    set numbers to empty list
+    set given to 0
+    for each part in parts
+        if part is "x" or part is "X" or part is "*"
+            stop
+        end
+        if not semver_is_digits(part)
+            fail with "'" + range + "' isn't a range: '" + word + "' isn't a version"
+        end
+        add number of part to numbers
+        add 1 to given
+    end
+    repeat while length of numbers is less than 3
+        add 0 to numbers
+    end
+    set pre to empty list
+    set build to empty list
+    if tail is not ""
+        if given is not 3
+            fail with "'" + range + "' isn't a range: '" + word + "' has a pre-release without all three numbers"
+        end
+        set whole to parse("" + item 1 of numbers + "." + item 2 of numbers + "." + item 3 of numbers + tail)
+        set pre to whole's pre
+        set build to whole's build
+    end
+    return record with given given, major item 1 of numbers, minor item 2 of numbers, patch item 3 of numbers,
+        pre pre, build build
+end
+
+to semver_whole with p
+    return version(p's major, p's minor, p's patch, p's pre)
+end
+
+# 1.2 means 1.2.0 up to 1.3.0, and 1 means 1.0.0 up to 2.0.0
+to semver_between with p
+    if p's given is 0
+        return empty list
+    end
+    return list of semver_op(">=", semver_whole(p)), semver_op("<", semver_next(p, p's given))
+end
+
+# the version after the partial's last given number, below any pre-release of it: 1.2 gives 1.3.0-0
+to semver_next with p, place
+    if place is 1
+        return version(p's major + 1, 0, 0, list of "0")
+    else if place is 2
+        return version(p's major, p's minor + 1, 0, list of "0")
+    end
+    return version(p's major, p's minor, p's patch + 1, list of "0")
+end
+
+to semver_at_least with p
+    if p's given is 0
+        return empty list
+    end
+    return list of semver_op(">=", semver_whole(p))
+end
+
+to semver_at_most with p
+    if p's given is 0
+        return empty list
+    else if p's given is 3
+        return list of semver_op("<=", semver_whole(p))
+    end
+    return list of semver_op("<", semver_next(p, p's given))
+end
+
+# ~1.2.3 is up to the next minor; ~1 up to the next major
+to semver_tilde with p
+    if p's given is 0
+        return empty list
+    else if p's given is 1
+        return semver_between(p)
+    end
+    return list of semver_op(">=", semver_whole(p)), semver_op("<", semver_next(p, 2))
+end
+
+# ^1.2.3 is up to the next major; with a 0 in front, up to the next number that isn't 0 in front
+to semver_caret with p
+    if p's given is 0
+        return empty list
+    end
+    set place to 1
+    if p's major is 0 and p's given is at least 2
+        set place to 2
+        if p's minor is 0 and p's given is 3
+            set place to 3
+        end
+    end
+    return list of semver_op(">=", semver_whole(p)), semver_op("<", semver_next(p, place))
+end
+
+# ---------- text ----------
+
+to semver_is_digits with words
+    if length of words is 0
+        return no
+    end
+    for each c in words
+        if not (c is in "0123456789")
+            return no
+        end
+    end
+    return yes
+end
+
+to semver_is_letter with c
+    return c is in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+end
+
+# the letters from `from` on
+to semver_from with words, from
+    if from is greater than length of words
+        return ""
+    end
+    return items from to length of words of words
+end
+
+# the letters up to `upto`
+to semver_upto with words, upto
+    if upto is less than 1
+        return ""
+    end
+    return items 1 to upto of words
+end
+
+# where the first of these letters is, or 0
+to semver_first_of with words, letters
+    set k to 1
+    for each c in words
+        if c is in letters
+            return k
+        end
+        add 1 to k
+    end
+    return 0
+end
+
+to semver_trimmed with words
+    set from to 1
+    set upto to length of words
+    repeat while from is at most upto and (item from of words is " " or item from of words is "\t")
+        add 1 to from
+    end
+    repeat while upto is at least from and (item upto of words is " " or item upto of words is "\t")
+        set upto to upto - 1
+    end
+    if from is greater than upto
+        return ""
+    end
+    return items from to upto of words
+end
+
+# the words between spaces, with none empty
+to semver_words with words
+    set made to empty list
+    for each word in split words by " "
+        if word is not ""
+            add word to made
+        end
+    end
+    return made
+end
+
+to semver_split_on with words, mark
+    return split words by mark
+end
