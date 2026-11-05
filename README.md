@@ -1,12 +1,12 @@
 # semver
 
-Versions for [Moth](https://github.com/samyyy2423/moth), as [Semantic Versioning 2.0.0](https://semver.org/)
+Versions for [Folio](https://github.com/samyyy2423/folio), as [Semantic Versioning 2.0.0](https://semver.org/)
 writes them (`1.4.0`, `2.0.0-beta.2`, `1.0.0+build.7`): read, compared, sorted and moved on, and ranges
-such as `^1.2.0`, `~1.4`, `>=1.0.0 <2.0.0` and `1.x` checked the way npm checks them. In Moth alone, so it
-works everywhere Moth does.
+such as `^1.2.0`, `~1.4`, `>=1.0.0 <2.0.0` and `1.x` checked the way npm checks them. In Folio alone, so it
+works everywhere Folio does.
 
 ```text
-moth add semver
+folio add semver
 ```
 
 ```
@@ -58,9 +58,9 @@ and patch (`>=1.3.0-alpha`), as npm has it, so `^1.2.0` doesn't pick up a beta b
 ## Tests
 
 ```text
-moth test semver.test.moth
+folio test semver.test.folio
 ```
 
 ## License
 
-Apache License 2.0, as Moth is: see [LICENSE](LICENSE).
+Apache License 2.0, as Folio is: see [LICENSE](LICENSE).

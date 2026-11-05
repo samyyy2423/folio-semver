@@ -1,6 +1,6 @@
-# semver.moth's tests: moth test semver.test.moth
+# semver.folio's tests: folio test semver.test.folio
 
-use "semver.moth" as semver
+use "semver.folio" as semver
 
 to fails_with with words
     try

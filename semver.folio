@@ -1,6 +1,6 @@
 # Versions as Semantic Versioning 2.0.0 writes them (1.4.0, 2.0.0-beta.2, 1.0.0+build.7): read, compared,
 # sorted and moved on, and ranges such as ^1.2.0, ~1.4, >=1.0.0 <2.0.0 and 1.x checked the way npm checks them.
-# In Moth alone, so it works everywhere.
+# In Folio alone, so it works everywhere.
 #
 #   use the package "semver" as semver
 #   set v to semver's parse("1.4.0-beta.2+build.7")
